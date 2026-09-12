@@ -1,0 +1,41 @@
+{
+  "$schema": "https://dsh.community/schemas/dsh-plugin-0.15.json",
+  "manifestVersion": "0.15",
+  "id": "com.dsh-tui-ecosystem.dsh-open-terminal",
+  "name": "dsh-open-terminal",
+  "version": "0.1.0",
+  "facets": {
+    "host": {
+      "entry": "lib/index.js",
+      "apiVersion": "v1alpha1"
+    }
+  },
+  "requires": {
+    "contracts": [
+      {
+        "apiVersion": "commands.dsh/v1alpha1",
+        "kind": "Command"
+      }
+    ]
+  },
+  "permissions": [
+    {
+      "name": "commands.invoke",
+      "scope": "com.dsh-tui-ecosystem.dsh-open-terminal.term",
+      "reason": "run the declared /term command"
+    }
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "com.dsh-tui-ecosystem.dsh-open-terminal.term",
+        "title": "/term",
+        "description": "Open a system terminal in a workspace folder (blank = the working-directory root; a fragment fuzzy-matches folders)"
+      }
+    ]
+  },
+  "license": "MIT",
+  "source": {
+    "repository": "https://github.com/VviLliAm-qwq/dsh-open-terminal"
+  }
+}

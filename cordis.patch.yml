@@ -1,0 +1,4 @@
+# dsh-open-terminal bundle patch: mounts the /term command plugin.
+- insert:
+    - id: dsh-open-terminal
+      name: 'dsh-open-terminal'
