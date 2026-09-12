@@ -169,7 +169,10 @@ describe('runTermCommand — errors', () => {
     it('refuses a path-shaped file too', async () => {
         const root = workspace();
         const { runtime } = windowsHarness(root);
-        const result = await runTermCommand(`beta${'\\'}..${'\\'}notes.txt`, runtime, OPTIONS);
+        // Built with the host separator: on POSIX a backslash is an ordinary
+        // file-name character, so a hand-written `beta\..\notes.txt` would name
+        // a (missing) single file instead of a path.
+        const result = await runTermCommand(join('beta', '..', 'notes.txt'), runtime, OPTIONS);
         expect(result.text).toContain('是文件，不是文件夹');
     });
 
