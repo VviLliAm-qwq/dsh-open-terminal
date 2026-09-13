@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Config, apply, name, type CommandDefinitionLike } from '../src/plugin.js';
 
+// Same pin as in command.test.ts: the registered hint is asserted in Chinese,
+// and `apply()` resolves the language through `resolveLang`, whose last resort
+// is the OS locale — `C.UTF-8` on a CI runner, which lands on `en`.
+process.env.DSH_TUI_LANG = 'zh';
+
 /** A minimal Cordis-like context: `get` answers by exact service key only. */
 function strictCtx(services: Record<string, unknown>): {
     ctx: unknown;

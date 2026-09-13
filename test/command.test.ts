@@ -14,6 +14,17 @@ import {
 } from '../src/command.js';
 import type { SpawnSpec } from '../src/terminal.js';
 
+// Pin the language for this file. The reply text asserted below is the Chinese
+// dictionary, and `runTermCommand` otherwise resolves the language itself:
+// `DSH_TUI_LANG` → the preference file → the OS locale. A CI runner has no
+// `~/.dsh-tui/lang.json` and reports `C.UTF-8`, which counts as a *present*
+// locale and therefore lands on `en` — so the suite passed on a Chinese desktop
+// and failed every CI job. Pinning the first link of the chain (see
+// `src/i18n.ts`) keeps these assertions about behaviour rather than about who
+// runs them. The probe is deliberately left to `process.env`, exactly as the
+// production path reads it.
+process.env.DSH_TUI_LANG = 'zh';
+
 const OPTIONS: TerminalCommandOptions = {
     command: '',
     maxCandidates: 0,
