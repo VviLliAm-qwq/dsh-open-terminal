@@ -3,7 +3,7 @@
   "manifestVersion": "0.15",
   "id": "com.dsh-tui-ecosystem.dsh-open-terminal",
   "name": "dsh-open-terminal",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "facets": {
     "host": {
       "entry": "lib/index.js",

@@ -37,6 +37,7 @@ import { existsSync, statSync } from 'node:fs';
 import { homedir, release as osRelease } from 'node:os';
 import { isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { rankFolders } from './fuzzy.js';
+import { resolveLang, t, type Lang } from './i18n.js';
 import { scanFolders, type ScanLimits, type ScannedFolder } from './scan.js';
 import {
     buildTerminalChain,
@@ -113,6 +114,8 @@ export interface TerminalRuntime {
     readonly scan?: (root: string, limits: ScanLimits, signal?: AbortSignal) => Promise<ScannedFolder[]>;
     /** Program resolver seam (defaults to the PATH probe in `terminal.ts`). */
     readonly resolveProgram?: (name: string, host: LaunchHost) => string | null;
+    /** Resolved UI language; the caller owns the settings seam and passes it in. */
+    readonly lang?: Lang;
 }
 
 /** Effective command options (schema defaults already applied). */
@@ -238,18 +241,19 @@ export async function launchTerminal(
     dir: string,
     template = '',
 ): Promise<CommandResultLike> {
+    const lang = runtime.lang ?? resolveLang();
     // A folder that is already gone must not be reported as opened: Windows
     // Terminal would simply refuse, and a fire-and-forget shim would call that
     // a success.
     if (!existsSync(dir)) {
-        return { kind: 'error', text: `目录不存在：${dir}` };
+        return { kind: 'error', text: t(lang, 'dirMissing', { dir }) };
     }
 
     const platform = runtime.platform ?? process.platform;
     const env = runtime.env ?? process.env;
     const release = runtime.release ?? osRelease();
     if (!hasGraphicalSession(platform, env, release)) {
-        return { kind: 'error', text: '当前环境没有图形会话，无法打开终端' };
+        return { kind: 'error', text: t(lang, 'noGraphicalSession') };
     }
 
     const host: LaunchHost = { platform, env, release };
@@ -264,7 +268,7 @@ export async function launchTerminal(
         return { kind: 'error', text: plan.error };
     }
     if (plan.specs.length === 0) {
-        return { kind: 'error', text: `找不到可用的终端程序（${terminalHint(platform)}）` };
+        return { kind: 'error', text: t(lang, 'noTerminalFound', { hint: terminalHint(platform, lang) }) };
     }
 
     const spawnSpec = runtime.spawn ?? spawnOnce;
@@ -272,13 +276,13 @@ export async function launchTerminal(
     for (const spec of plan.specs) {
         tried.push(spec.label);
         if (await spawnSpec(spec)) {
-            return { kind: 'success', text: `已在 ${dir} 打开终端（${spec.label}）` };
+            return { kind: 'success', text: t(lang, 'opened', { dir, launcher: spec.label }) };
         }
     }
-    const attempted = [...new Set(tried)].join('、');
+    const attempted = [...new Set(tried)].join(t(lang, 'listSeparator'));
     return {
         kind: 'error',
-        text: `无法在 ${dir} 打开终端（已尝试 ${attempted}，均失败；${terminalHint(platform)}）`,
+        text: t(lang, 'openFailed', { dir, attempted, hint: terminalHint(platform, lang) }),
     };
 }
 
@@ -288,6 +292,7 @@ export async function runTermCommand(
     runtime: TerminalRuntime,
     options: TerminalCommandOptions,
 ): Promise<CommandResultLike> {
+    const lang = runtime.lang ?? resolveLang();
     const trimmed = rawInput.trim();
     const query = trimmed.startsWith('~') ? expandTilde(trimmed, homeDir(runtime)) : trimmed;
 
@@ -307,7 +312,7 @@ export async function runTermCommand(
                 if (statSync(target).isDirectory()) {
                     return launchTerminal(runtime, target, options.command);
                 }
-                return { kind: 'error', text: `${target} 是文件，不是文件夹（/term 只在文件夹打开终端）` };
+                return { kind: 'error', text: t(lang, 'notAFolder', { target }) };
             }
             // Missing path: fall through to fuzzy search (typo recovery).
         }
@@ -326,7 +331,7 @@ export async function runTermCommand(
         if (existsSync(direct)) {
             return statSync(direct).isDirectory()
                 ? launchTerminal(runtime, direct, options.command)
-                : { kind: 'error', text: `${direct} 是文件，不是文件夹（/term 只在文件夹打开终端）` };
+                : { kind: 'error', text: t(lang, 'notAFolder', { target: direct }) };
         }
     }
     catch {
@@ -350,7 +355,7 @@ export async function runTermCommand(
     if (ranked.length === 0) {
         return {
             kind: 'error',
-            text: `工作区中找不到与 “${query}” 相关的文件夹（留空参数可在工作目录根打开终端）`,
+            text: t(lang, 'noFolderMatch', { query }),
         };
     }
 
@@ -365,11 +370,11 @@ export async function runTermCommand(
         const preview = ranked
             .slice(0, 5)
             .map((folder) => folder.relPath)
-            .join('；');
-        const more = ranked.length > 5 ? ` 等 ${ranked.length} 项` : '';
+            .join(t(lang, 'listSeparator'));
+        const more = ranked.length > 5 ? t(lang, 'moreItems', { count: ranked.length }) : '';
         return {
             kind: 'error',
-            text: `找到 ${ranked.length} 个匹配，但当前环境没有对话框选择，请键入更精确的路径。候选：${preview}${more}`,
+            text: t(lang, 'noDialogCandidates', { count: ranked.length, preview, more }),
         };
     }
 
@@ -380,8 +385,8 @@ export async function runTermCommand(
     const dropped = ranked.length - shown.length;
     const picked = await dialog.select({
         title: dropped > 0
-            ? `在哪个文件夹打开终端？（${query} · 共 ${ranked.length} 个匹配，仅显示前 ${shown.length} 个）`
-            : `在哪个文件夹打开终端？（${query} · ${ranked.length} 个匹配）`,
+            ? t(lang, 'dialogTitleTruncated', { query, count: ranked.length, shown: shown.length })
+            : t(lang, 'dialogTitle', { query, count: ranked.length }),
         options: shown.map((folder) => ({
             id: folder.relPath,
             label: `📁 ${folder.basename}`,
@@ -401,5 +406,5 @@ export async function runTermCommand(
     catch {
         // fall through to the shared error below
     }
-    return { kind: 'error', text: `无法在 ${target} 打开终端（目标已失效）` };
+    return { kind: 'error', text: t(lang, 'targetStale', { target }) };
 }

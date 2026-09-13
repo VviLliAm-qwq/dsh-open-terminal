@@ -27,6 +27,7 @@ import {
 } from './command.js';
 import { createLogger, recordModuleImport, type HostLoggerLike } from './log.js';
 import { DEFAULT_LIMITS } from './scan.js';
+import { resolveLang, t } from './i18n.js';
 
 /** Cordis row id used for the plugin. */
 export const name = 'dsh-open-terminal';
@@ -77,6 +78,8 @@ recordModuleImport(import.meta.url);
 export interface CommandDefinitionLike {
     readonly name: string;
     readonly description: string;
+    /** Localized descriptions the host renders itself (English is the fallback). */
+    readonly descriptions?: { readonly zh?: string; readonly en?: string };
     readonly input?: { readonly hint: string };
     readonly handler: (invocation: CommandInvocationLike) => CommandResultLike | Promise<CommandResultLike>;
 }
@@ -115,6 +118,22 @@ function effectiveOptions(config: Config): TerminalCommandOptions {
 export function apply(ctx: Context, config: Config = {}): void {
     const options = effectiveOptions(config);
     const log = createLogger(ctx.logger as unknown as HostLoggerLike | undefined);
+    /**
+     * The host's live language preference (`dsh-tui.lang`), or undefined.
+     *
+     * Read through the public `settings.get(ns)` seam and defensively: a host
+     * without that namespace must still render in the historical default.
+     */
+    const settingsLang = (): unknown => {
+        try {
+            const settings = ctx.get('settings', false) as { get?: (ns: string) => unknown } | undefined;
+            const section = settings?.get?.('dsh-tui') as { lang?: unknown } | undefined;
+            return section?.lang;
+        }
+        catch {
+            return undefined;
+        }
+    };
     log.info(`apply start pid=${process.pid} entry=${import.meta.url}`);
     log.info(
         `config command=${options.command === '' ? '(auto chain)' : JSON.stringify(options.command)}`
@@ -124,14 +143,23 @@ export function apply(ctx: Context, config: Config = {}): void {
 
     const definition: CommandDefinitionLike = {
         name: 'term',
-        description: 'Open a system terminal in a workspace folder (blank = the working-directory root; a fragment fuzzy-matches folders)',
-        input: { hint: '<文件夹名片段>（留空 = 在工作目录根开终端）' },
+        // The host localizes `descriptions` itself, so both languages ride along;
+        // `description` stays the English fallback for a host that does not.
+        description: t('en', 'commandDescription'),
+        descriptions: {
+            zh: t('zh', 'commandDescription'),
+            en: t('en', 'commandDescription'),
+        },
+        input: { hint: t(resolveLang({ settingsLang: settingsLang() }), 'commandHint') },
         handler: async (invocation) => {
             const cwd = resolveSessionCwd(invocation.agent);
             const dialogs = ctx.get('tuiDialogs', false) as TerminalDialogLike | undefined;
+            // Resolved per call, so a `/lang` switch reaches every reply without a
+            // restart; the registered hint above is a snapshot the host cannot refresh.
+            const lang = resolveLang({ settingsLang: settingsLang() });
             return runTermCommand(
                 invocation.rawInput,
-                { cwd, dialogs, signal: invocation.signal },
+                { cwd, dialogs, signal: invocation.signal, lang },
                 options,
             );
         },

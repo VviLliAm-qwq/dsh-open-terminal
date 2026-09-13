@@ -6,6 +6,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-13
+
+### Added
+
+- **Bilingual output.** Every string the command renders — replies, errors, the
+  candidate list, the picker's title and the three platform launcher hints — now
+  follows the host's language, resolved through the same chain dsh-TUI uses:
+  `DSH_TUI_LANG` → the live `dsh-tui` settings namespace → `~/.dsh-tui/lang.json`
+  → the OS locale → Chinese. A locale that is present but unsupported reads as
+  English; a *missing* locale keeps Chinese, so a Chinese host that never wrote a
+  preference renders exactly as before.
+- The command definition carries a `descriptions { zh, en }` map for the host to
+  localize, and the input hint is rendered in the resolved language.
+- `src/i18n.ts` exports the resolution chain (`resolveLang`, `normalizeLang`,
+  `langFilePath`) and the dictionary (`t`, `STRING_KEYS`); both READMEs gained a
+  **Language** section.
+- Tests for the dictionaries and the resolution chain: key parity between the two
+  languages, precedence (env → host setting → file → locale), unsupported-locale
+  behaviour, unknown keys and placeholder substitution.
+
+### Changed
+
+- The language is re-resolved on every invocation, so a `/lang` switch reaches
+  the next reply without a restart.
+- `terminalHint(platform, lang?)` takes an optional language; existing callers
+  keep working through the default.
+
+### Notes
+
+- Modules under `lib/` are `tsc` build output: change `src/` and rebuild.
+
 ## [0.1.0] - 2026-09-12
 
 ### Added

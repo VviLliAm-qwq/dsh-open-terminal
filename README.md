@@ -58,6 +58,23 @@ Two Windows field findings shape the implementation (measured 2026-09-12):
    `fs.statSync()` throws `EACCES`, while `fs.lstatSync()` succeeds. A probe built
    on `existsSync` would silently skip exactly the terminals users expect.
 
+## Language
+
+The command replies, error messages and the completion hint follow the host's
+language. The chain is the one dsh-TUI uses:
+
+`DSH_TUI_LANG` → the live `dsh-tui` settings namespace (where `/lang` lands) →
+`~/.dsh-tui/lang.json` → the OS locale → Chinese.
+
+- A locale that is present but unsupported (say `fr`) reads as **English**; a
+  *missing* locale keeps **Chinese**, so a Chinese host that never wrote a
+  preference renders exactly as before this release.
+- Replies re-resolve the language on every invocation, so `/lang` takes effect
+  without a restart. The registered completion hint is a snapshot from
+  activation time and follows the language after a restart.
+- `DSH_OPEN_TERMINAL_LANG_FILE` overrides the preference-file path (tests and
+  diagnostics).
+
 ## Configuration
 
 | Key | Default | Description |

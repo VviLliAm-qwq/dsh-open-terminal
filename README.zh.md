@@ -48,6 +48,17 @@ dsh plugin --profile dsh-tui add file:<本仓库绝对路径>
 1. `cmd /d /s /c start "" <不存在的程序>` **退出码仍是 0**，所以「程序缺失」无法从 shim 的退出码发现；候选程序一律先按 `PATH`（含 `PATHEXT`）解析，再启动。
 2. 应用执行别名（`%LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe`、`…\pwsh.exe`）是 `APPEXECLINK` 重解析点：`fs.existsSync()` 判定为不存在，`fs.statSync()` 抛 `EACCES`，只有 `fs.lstatSync()` 成功。基于 `existsSync` 的探测会静默漏掉用户最想要的那个终端。
 
+## 语言 / Language
+
+命令回执、错误提示与补全提示都跟随宿主语言，解析链与 dsh-TUI 一致：
+
+`DSH_TUI_LANG` → 运行中的 `dsh-tui` 设置命名空间（`/lang` 的落点）→
+`~/.dsh-tui/lang.json` → 系统 locale → 中文。
+
+- 语言**存在但不支持**（如 `fr`）时回落英文；**完全没有信息**时沿用中文，保证中文宿主的行为与加入双语之前完全一致。
+- 回执在每次调用时重新解析语言，`/lang` 切换**无需重启**；命令补全里的提示是注册时的快照，重启后跟随新语言。
+- `DSH_OPEN_TERMINAL_LANG_FILE` 可覆盖偏好文件路径（测试与诊断用）。
+
 ## 配置
 
 | 键 | 默认 | 说明 |

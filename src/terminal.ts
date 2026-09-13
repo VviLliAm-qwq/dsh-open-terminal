@@ -42,6 +42,7 @@
  */
 import { accessSync, constants, lstatSync } from 'node:fs';
 import { release as osRelease } from 'node:os';
+import { resolveLang, t, type Lang } from './i18n.js';
 
 /** A spawn descriptor compatible with `child_process.spawn` options. */
 export interface SpawnSpec {
@@ -109,12 +110,12 @@ export function hasGraphicalSession(
 }
 
 /** Human-facing hint appended when no candidate could be started. */
-export function terminalHint(platform: NodeJS.Platform): string {
+export function terminalHint(platform: NodeJS.Platform, lang: Lang = resolveLang()): string {
     if (platform === 'win32') {
-        return '请确认已安装 Windows Terminal（wt.exe）、PowerShell 或 cmd，或用配置 command 指定终端';
+        return t(lang, 'hintWindows');
     }
-    if (platform === 'darwin') return '请确认 /usr/bin/open 与 Terminal.app 可用，或用配置 command 指定终端';
-    return '请安装任一终端模拟器（gnome-terminal / konsole / xfce4-terminal / kitty / alacritty / wezterm / xterm…），或用配置 command 指定';
+    if (platform === 'darwin') return t(lang, 'hintMac');
+    return t(lang, 'hintLinux');
 }
 
 // ---------------------------------------------------------------------------
