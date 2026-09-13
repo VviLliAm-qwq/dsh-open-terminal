@@ -147,8 +147,9 @@ recorded in the session log as log-only events.
   (`.github/workflows/release.yml` verifies that the tag matches
   `package.json`, then runs build/test/manifest/pack checks,
   `npm publish --provenance`, and creates a GitHub Release)
-- **Prerequisite**: the repository secret `NPM_TOKEN`, and the npm name
-  `dsh-open-terminal` must still be free
+- **Prerequisite**: a Trusted Publisher configured for this package on npm
+  (GitHub Actions · this repository · `release.yml`) — publishing uses OIDC, so
+  no token is stored in the repository
 - **Ecosystem listing**: this README carries the
   [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI) link required by
   <https://dshtui.com/plugins/>

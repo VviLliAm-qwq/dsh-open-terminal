@@ -98,7 +98,7 @@ dsh plugin --profile dsh-tui add file:<本仓库绝对路径>
 
 - **仓库**：<https://github.com/VviLliAm-qwq/dsh-open-terminal>（公开）
 - **版本**：语义化版本；发布由 `v*` tag 驱动（`.github/workflows/release.yml` 校验 tag 与 `package.json` 一致 → build/test/manifest/pack 校验 → `npm publish --provenance` → 创建 GitHub Release）
-- **前置**：仓库 Secrets 需配置 `NPM_TOKEN`；npm 名称 `dsh-open-terminal` 需仍未被占用
+- **前置**：npm 包已配置 Trusted Publisher（GitHub Actions · 本仓库 · `release.yml`）——发布走 OIDC，无需在仓库里存放任何令牌
 - **生态收录**：本 README 顶部带有 <https://dshtui.com/plugins/> 要求的 [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI) 链接
 
 ## 开发与验证
