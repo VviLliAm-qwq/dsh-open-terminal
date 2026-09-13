@@ -1,5 +1,7 @@
 # dsh-open-terminal
 
+[![ci](https://github.com/VviLliAm-qwq/dsh-open-terminal/actions/workflows/ci.yml/badge.svg)](https://github.com/VviLliAm-qwq/dsh-open-terminal/actions/workflows/ci.yml)
+
 **English** · [中文](README.zh.md)
 
 `/term` — open a system terminal in any folder of the workspace. A bare `/term`

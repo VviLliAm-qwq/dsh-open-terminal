@@ -1,5 +1,7 @@
 # dsh-open-terminal
 
+[![ci](https://github.com/VviLliAm-qwq/dsh-open-terminal/actions/workflows/ci.yml/badge.svg)](https://github.com/VviLliAm-qwq/dsh-open-terminal/actions/workflows/ci.yml)
+
 **中文** · [English](README.md)
 
 `/term` —— 在工作区的任意文件夹里打开系统终端。不带参数时打开工作目录根；带参数时对文件夹做模糊搜索，多个匹配交给宿主的托管选择框。为
