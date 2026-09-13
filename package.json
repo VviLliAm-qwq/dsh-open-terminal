@@ -1,6 +1,6 @@
 {
   "name": "dsh-open-terminal",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "dsh-TUI /term: open a system terminal in a workspace folder — blank opens the working-directory root, a fragment fuzzy-matches folders (unlimited candidates, managed picker), with ordered per-platform launcher chains for Windows / macOS / Linux (incl. WSL).",
   "packageManager": "pnpm@11.22.0",
   "type": "module",
