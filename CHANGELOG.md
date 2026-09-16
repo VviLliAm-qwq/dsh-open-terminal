@@ -12,6 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-16
+
+### Added
+
+- **`kgx` (GNOME Console) joins the Linux chain**, right after `gnome-terminal`, so Fedora and other GNOME 42+ desktops stop reporting `noTerminalFound`. Its `--working-directory=` option is verified against the upstream `GOptionEntry` and the Ubuntu manpage. `tilix` and `terminator` are appended at the end of the explicit-working-directory group (before `x-terminal-emulator`) so no existing entry changes its relative order; both verified against their manpages.
+
+### Fixed
+
+- **A folder whose name contains `%` no longer reaches the `cmd` command line.** The `%` check ran on the template *before* `{dir}` was substituted, so a directory named `50%off` still landed in `cmd /c start`, where `%` is expanded or truncated even inside quotes. The final `[programPath, ...argv]` is now re-checked after substitution (only when the platform really goes through `cmd`), and a hit reports a clear error naming the directory. The WSL `cmd.exe` fallback candidate is dropped in that case while the Linux chain above it still opens the folder. An apostrophe (`Bob's stuff`) is deliberately *not* rejected: it is a valid Windows directory name and is meaningless to `cmd`.
+
+### Documentation
+
+- The READMEs no longer describe quotes in a launch template as "rejected": quotes are grouping characters, and the branch that refuses them only fires when a *different* quote is nested inside a quoted group.
+- The development/verification section is marked as checkout-only. The published package ships `lib/`, the manifest, the patch and the docs — not `src/`, `test/`, `scripts/` or the workspace `tools/`, so `node tools/probe-plugin.mjs` cannot be run from an npm install.
+- Both READMEs record that the graphical-session check is a no-op on Windows: a headless Windows host fails at the spawn / grace-window stage instead of reporting "no graphical session".
+- `package.json` gains the discovery `keywords` (including `dsh-plugin`).
+
 ## [0.2.0] - 2026-09-13
 
 ### Added
