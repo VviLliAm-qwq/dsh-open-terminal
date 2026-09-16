@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
     buildTerminalChain,
     carriesDirPlaceholder,
+    cmdUnsafeValueError,
     currentHost,
     detectWsl,
     executableProbe,
@@ -138,6 +139,15 @@ describe('parseLaunchTemplate', () => {
         expect(parseLaunchTemplate("--title='my shell'").tokens).toEqual(['--title=my shell']);
     });
 
+    it('treats quotes as grouping, not as a forbidden character', () => {
+        // The README documents quoting as the way to keep spaces in one token,
+        // so a plain quoted template must be accepted.
+        expect(parseLaunchTemplate('wt.exe --title "My Shell"').error).toBeUndefined();
+        // The only quote that survives into a token is the *other* kind nested
+        // inside a quoted group — the single case the forbidden list catches.
+        expect(parseLaunchTemplate("wt.exe --title 'say \"hi\"'").error).toContain('"');
+    });
+
     it('accepts {dir} standalone or glued into a flag', () => {
         expect(parseLaunchTemplate('gnome-terminal --working-directory={dir}').tokens)
             .toEqual(['gnome-terminal', '--working-directory={dir}']);
@@ -163,6 +173,17 @@ describe('template substitution', () => {
         expect(carriesDirPlaceholder(['-d', '{dir}'])).toBe(true);
         expect(carriesDirPlaceholder(['--working-directory={dir}'])).toBe(true);
         expect(carriesDirPlaceholder(['-a', 'Terminal'])).toBe(false);
+    });
+});
+
+describe('cmdUnsafeValueError', () => {
+    it('flags exactly what cmd would expand or truncate', () => {
+        expect(cmdUnsafeValueError(['C:\\work\\50%off'], 'C:\\work\\50%off')).toContain('%');
+        expect(cmdUnsafeValueError(['x\ny'], 'x')).toContain('\\n');
+        // Quotes and apostrophes are fine in a *value*: the shim quotes every
+        // token itself, and `'` means nothing to cmd.
+        expect(cmdUnsafeValueError(['C:\\work\\Bob\'s stuff'], "C:\\work\\Bob's stuff")).toBeUndefined();
+        expect(cmdUnsafeValueError(['-d', 'C:\\my project'], 'C:\\my project')).toBeUndefined();
     });
 });
 
@@ -242,6 +263,48 @@ describe('buildTerminalChain — Windows', () => {
         expect(plan.specs).toEqual([]);
         expect(plan.error).toContain('%');
     });
+
+    it('re-checks the command line after {dir} substitution, so a % in the folder is refused', () => {
+        // The template carries no `%` — the *folder name* brings it, and the
+        // parser never sees the substituted value. On Windows the argv lands on
+        // a `cmd /c start` line, where `50%off` would expand as `%off%`.
+        const plan = buildTerminalChain({
+            dir: 'C:\\work\\50%off',
+            template: 'wt.exe -d {dir}',
+            host: winHost({ ComSpec: comspec }),
+            resolve: () => 'C:\\fake\\wt.exe',
+        });
+        expect(plan.specs).toEqual([]);
+        expect(plan.error).toContain('%');
+        expect(plan.error).toContain('50%off');
+    });
+
+    it('keeps an apostrophe in a folder name working — `\'` is not a cmd metacharacter', () => {
+        const plan = buildTerminalChain({
+            dir: "C:\\work\\Bob's stuff",
+            template: 'wt.exe -d {dir}',
+            host: winHost({ ComSpec: comspec }),
+            resolve: () => 'C:\\fake\\wt.exe',
+        });
+        expect(plan.error).toBeUndefined();
+        expect(plan.specs[0]!.args[3]).toBe('start "" "C:\\fake\\wt.exe" "-d" "C:\\work\\Bob\'s stuff"');
+    });
+});
+
+describe('buildTerminalChain — template without cmd (POSIX)', () => {
+    it('accepts a % in the folder name: nothing there goes through cmd', () => {
+        const plan = buildTerminalChain({
+            dir: '/home/me/50%off',
+            template: 'gnome-terminal --working-directory={dir}',
+            host: linuxHost({ DISPLAY: ':0' }),
+            resolve: () => '/usr/bin/gnome-terminal',
+        });
+        expect(plan.error).toBeUndefined();
+        expect(plan.specs[0]).toMatchObject({
+            args: ['--working-directory=/home/me/50%off'],
+            cwd: '/home/me/50%off',
+        });
+    });
 });
 
 describe('buildTerminalChain — macOS', () => {
@@ -265,6 +328,7 @@ describe('buildTerminalChain — Linux', () => {
     it('walks the emulator preference order and passes the folder its own way', () => {
         const present = new Map<string, string>([
             ['gnome-terminal', '/usr/bin/gnome-terminal'],
+            ['kgx', '/usr/bin/kgx'],
             ['kitty', '/usr/bin/kitty'],
             ['x-terminal-emulator', '/usr/bin/x-terminal-emulator'],
             ['xterm', '/usr/bin/xterm'],
@@ -275,12 +339,43 @@ describe('buildTerminalChain — Linux', () => {
             resolve: (name) => present.get(name) ?? null,
         });
         expect(plan.specs.map((spec) => spec.label))
-            .toEqual(['gnome-terminal', 'kitty', 'x-terminal-emulator', 'xterm']);
+            .toEqual(['gnome-terminal', 'kgx', 'kitty', 'x-terminal-emulator', 'xterm']);
         expect(plan.specs[0]!.args).toEqual(['--working-directory=/home/me/proj']);
         // The generic fallbacks carry no flag — the child's cwd does the work.
-        expect(plan.specs[2]!.args).toEqual([]);
+        expect(plan.specs[3]!.args).toEqual([]);
         expect(plan.specs.every((spec) => spec.cwd === '/home/me/proj')).toBe(true);
         expect(plan.specs.every((spec) => spec.detached && !spec.windowsVerbatimArguments)).toBe(true);
+    });
+
+    it('offers GNOME Console (kgx) right after gnome-terminal — the Fedora default', () => {
+        const plan = buildTerminalChain({
+            dir: '/home/me/proj',
+            host: linuxHost({ WAYLAND_DISPLAY: 'wayland-0' }),
+            resolve: (name) => (name === 'kgx' ? '/usr/bin/kgx' : null),
+        });
+        expect(plan.specs.map((spec) => spec.label)).toEqual(['kgx']);
+        expect(plan.specs[0]).toMatchObject({
+            file: '/usr/bin/kgx',
+            args: ['--working-directory=/home/me/proj'],
+            cwd: '/home/me/proj',
+            windowsVerbatimArguments: false,
+        });
+    });
+
+    it('falls back to tilix and terminator before the generic alternatives symlink', () => {
+        const present = new Map<string, string>([
+            ['tilix', '/usr/bin/tilix'],
+            ['terminator', '/usr/bin/terminator'],
+            ['x-terminal-emulator', '/usr/bin/x-terminal-emulator'],
+        ]);
+        const plan = buildTerminalChain({
+            dir: '/home/me/proj',
+            host: linuxHost({ DISPLAY: ':0' }),
+            resolve: (name) => present.get(name) ?? null,
+        });
+        expect(plan.specs.map((spec) => spec.label)).toEqual(['tilix', 'terminator', 'x-terminal-emulator']);
+        expect(plan.specs[0]!.args).toEqual(['--working-directory=/home/me/proj']);
+        expect(plan.specs[1]!.args).toEqual(['--working-directory=/home/me/proj']);
     });
 
     it('adds a Windows-side Windows Terminal as a WSL last resort', () => {
@@ -300,6 +395,25 @@ describe('buildTerminalChain — Linux', () => {
         });
         expect(plan.specs.map((spec) => spec.label)).toEqual(['xterm', 'wt.exe (Windows side)']);
         expect(plan.specs[1]!.args[3]).toContain('\\\\wsl$\\Ubuntu\\home\\me\\proj');
+    });
+
+    it('drops the WSL fallback when the folder name would reach cmd with a %', () => {
+        // The UNC path goes onto a `cmd /c start` line; `%off%` would expand.
+        const host: LaunchHost = {
+            platform: 'linux',
+            env: { WSL_DISTRO_NAME: 'Ubuntu' },
+            release: '5.15.90.1-microsoft-standard-WSL2',
+        };
+        const plan = buildTerminalChain({
+            dir: '/home/me/50%off',
+            host,
+            resolve: (name) => {
+                if (name === 'xterm') return '/usr/bin/xterm';
+                if (name === 'cmd.exe') return '/mnt/c/Windows/System32/cmd.exe';
+                return null;
+            },
+        });
+        expect(plan.specs.map((spec) => spec.label)).toEqual(['xterm']);
     });
 
     it('translates a WSL folder into the \\\\wsl$ UNC form Windows accepts', () => {

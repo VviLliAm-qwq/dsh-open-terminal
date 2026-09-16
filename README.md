@@ -47,7 +47,7 @@ tried. When the whole chain fails, the error names every program that was tried.
 |---|---|---|
 | **Windows** | `wt.exe -d <dir>` → `pwsh.exe` → `powershell.exe` → `cmd.exe` | `wt.exe` is spawned directly (a GUI launcher: it opens its own window and reports a real exit code); the console shells go through `cmd /d /s /c start "" "<exe>"`, which is what creates a **new window** — spawning them directly would attach them to the TUI's console |
 | **macOS** | `open -a Terminal <dir>` | Terminal.app is always present |
-| **Linux** | `gnome-terminal --working-directory=` → `konsole --workdir` → `xfce4-terminal --working-directory=` → `mate-terminal --working-directory=` → `kitty --directory` → `alacritty --working-directory` → `wezterm start --cwd` → `foot --working-directory=` → `x-terminal-emulator` → `xterm` | The last two carry no flag and receive the folder through the child's working directory |
+| **Linux** | `gnome-terminal --working-directory=` → `kgx --working-directory=` → `konsole --workdir` → `xfce4-terminal --working-directory=` → `mate-terminal --working-directory=` → `kitty --directory` → `alacritty --working-directory` → `wezterm start --cwd` → `foot --working-directory=` → `tilix --working-directory=` → `terminator --working-directory=` → `x-terminal-emulator` → `xterm` | Distribution defaults first — `kgx` is GNOME Console, the default terminal on Fedora and modern GNOME. The generic tail (`x-terminal-emulator` is Debian's alternatives symlink) carries no flag and receives the folder through the child's working directory. Every flag follows the program's own manual page / upstream source |
 | **WSL** | the Linux chain, then `cmd.exe /c start "" "wt.exe" -d "\\wsl$\<distro>\…"` | Works with or without WSLg |
 
 Two Windows field findings shape the implementation (measured 2026-09-12):
@@ -92,10 +92,18 @@ behaviour. Configuration is applied through `/settings` or the profile's Cordis
 configuration.
 
 Template syntax: whitespace separates arguments, single or double quotes group
-them, and `{dir}` may stand alone or be glued into a flag
-(`--working-directory={dir}`). A template containing `"`, `'`, `%`, or an
-unknown placeholder such as `{cwd}` is rejected with an explanation — `%` is
-expanded by `cmd` even inside quotes, so it can never be passed through safely.
+them (quoting is how an argument keeps its spaces — the quotes are syntax, not
+part of the token), and `{dir}` may stand alone or be glued into a flag
+(`--working-directory={dir}`). A template is rejected with an explanation when it
+carries `%`, an unknown placeholder such as `{cwd}`, or a quote *nested* inside a
+quoted group — `cmd` expands `%VAR%` even inside quotes, so a `%` can never be
+passed through safely.
+
+`%` is the one character that must also survive `{dir}` substitution, so the
+substituted command line is checked again: on Windows a target folder whose name
+contains `%` is refused with a clear error instead of being handed to `cmd`
+(which would expand it), while a folder such as `50%off` still opens on a plain
+macOS/Linux host, where the argv is spawned directly.
 
 ## Working-directory semantics
 
@@ -136,8 +144,15 @@ recorded in the session log as log-only events.
 - Symlinked folders are indexed but never descended into (cycle and escape
   protection).
 - `~` expansion covers `~`, `~/…` and `~\…` only; `~user` is not resolved.
-- No graphical session = clear refusal: Linux needs `DISPLAY` or
-  `WAYLAND_DISPLAY` (WSL counts as reachable through the Windows side).
+- No graphical session = clear refusal **on Linux**: it needs `DISPLAY` or
+  `WAYLAND_DISPLAY` (WSL counts as reachable through the Windows side). On
+  Windows the check is a no-op — a session is always assumed — so a
+  session-less Windows host cannot be reported as such and fails later, in the
+  spawn / grace-window path.
+- A folder name containing `%` cannot be handed to `cmd`: with a Windows
+  `command` template that is a clear error (see the configuration section), and
+  on WSL only the Windows-side fallback candidate is dropped while the Linux
+  chain above still opens normally.
 - Two diagnostic log lines are the only files this plugin writes
   (`~/.dsh-tui/dsh-open-terminal.log`); it never writes into the workspace and
   never appends session events.
@@ -158,6 +173,11 @@ recorded in the session log as log-only events.
 
 ## Development and verification
 
+Everything in this section runs against a **repository checkout**. The published
+npm package carries `lib/`, `dsh-plugin.json`, `cordis.patch.yml` and the
+documents only — `src/`, `test/`, `scripts/` and the workspace's `tools/` are
+**not** part of it (`package.json` `files` excludes them on purpose).
+
 ```sh
 pnpm install
 pnpm build              # tsc -> lib/
@@ -172,9 +192,12 @@ exactly `{ Config, apply, name }`; `test/entry.test.ts` pins that shape, because
 a richer module namespace makes the dsh-TUI seams refuse the plugin's
 registrations without any visible error.
 
-Integration check on a real host composition:
+Integration check on a real host composition — **checkout only**, because the
+helper lives in the workspace repository (`tools/`), not in the npm package, so
+this line cannot work for anyone who installed from npm:
 
 ```sh
+# from the workspace root (the directory holding tools/ and plugins/), after pnpm build
 node tools/probe-plugin.mjs plugins/dsh-open-terminal   # exit code 0 = registrations accepted
 ```
 

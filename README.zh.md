@@ -42,7 +42,7 @@ dsh plugin --profile dsh-tui add file:<本仓库绝对路径>
 |---|---|---|
 | **Windows** | `wt.exe -d <目录>` → `pwsh.exe` → `powershell.exe` → `cmd.exe` | `wt.exe` 直接 spawn（GUI 启动器：自己开窗、退出码可信）；三个控制台 shell 经 `cmd /d /s /c start "" "<exe>"` 启动，**这样才会开新窗口** —— 直接 spawn 会把它们挂到 TUI 的控制台上 |
 | **macOS** | `open -a Terminal <目录>` | Terminal.app 一定存在 |
-| **Linux** | `gnome-terminal --working-directory=` → `konsole --workdir` → `xfce4-terminal --working-directory=` → `mate-terminal --working-directory=` → `kitty --directory` → `alacritty --working-directory` → `wezterm start --cwd` → `foot --working-directory=` → `x-terminal-emulator` → `xterm` | 最后两个不带参数，通过子进程工作目录落地 |
+| **Linux** | `gnome-terminal --working-directory=` → `kgx --working-directory=` → `konsole --workdir` → `xfce4-terminal --working-directory=` → `mate-terminal --working-directory=` → `kitty --directory` → `alacritty --working-directory` → `wezterm start --cwd` → `foot --working-directory=` → `tilix --working-directory=` → `terminator --working-directory=` → `x-terminal-emulator` → `xterm` | 发行版自带默认终端优先 —— `kgx` 即 GNOME Console，Fedora 与新版 GNOME 的默认终端。末尾的通用候选（`x-terminal-emulator` 是 Debian 的 alternatives 符号链接）不带参数，通过子进程工作目录落地。每个参数都取自程序自身的 manpage / 上游源码 |
 | **WSL** | 先走 Linux 链，再兜底 `cmd.exe /c start "" "wt.exe" -d "\\wsl$\<发行版>\…"` | 有无 WSLg 均可用 |
 
 两条 Windows 实测结论（2026-09-12）决定了实现方式：
@@ -73,7 +73,9 @@ dsh plugin --profile dsh-tui add file:<本仓库绝对路径>
 
 所有键都有默认值，缺省即按上表行为降级。配置经 `/settings` 或 profile 的 Cordis 配置覆盖。
 
-模板语法：空白分隔参数，单/双引号可包裹含空格的参数，`{dir}` 可独立成项也可拼进参数（`--working-directory={dir}`）。含 `"`、`'`、`%` 或未知占位符（如 `{cwd}`）的模板会被拒绝并说明原因 —— `%` 即使在引号内也会被 `cmd` 展开，无法安全透传。
+模板语法：空白分隔参数，单/双引号可包裹含空格的参数（引号是分组语法，不进入参数本身），`{dir}` 可独立成项也可拼进参数（`--working-directory={dir}`）。含 `%`、未知占位符（如 `{cwd}`），或在引号组**内部**再嵌套另一种引号的模板会被拒绝并说明原因 —— `%` 即使在引号内也会被 `cmd` 展开，无法安全透传。
+
+`%` 是唯一还需要在 `{dir}` 替换后再查一遍的字符，因此替换后的命令行会再次校验：Windows 上目录名含 `%` 会明确报错，而不是把它交给 `cmd`（那会被展开）；macOS/Linux 上 argv 直接 spawn，`50%off` 这类目录照常打开。
 
 ## 工作目录语义
 
@@ -93,7 +95,8 @@ dsh plugin --profile dsh-tui add file:<本仓库绝对路径>
 - Windows Terminal 按自身的 `windowingBehavior` 设置决定开新窗口还是新标签页；本插件只传 `-d <目录>`，不强制二者之一。
 - 指向目录的符号链接会被索引为候选，但**不会被递归遍历**（防环、防越出工作区）。
 - `~` 展开仅支持 `~` / `~/…` / `~\…`，不解析 `~user`。
-- 无图形会话时明确拒绝：Linux 需 `DISPLAY` 或 `WAYLAND_DISPLAY`；WSL 视为可经 Windows 侧打开。
+- **Linux** 上无图形会话时明确拒绝：需 `DISPLAY` 或 `WAYLAND_DISPLAY`（WSL 视为可经 Windows 侧打开）。Windows 上该检查是空操作 —— 一律假定有图形会话 —— 因此无桌面的 Windows 宿主不会报「无图形会话」，而是在后面的 spawn / 宽限窗口阶段失败。
+- 目录名含 `%` 时无法交给 `cmd`：Windows 上配了 `command` 模板会明确报错（见配置一节）；WSL 上只丢弃那个 Windows 侧兜底候选，上面的 Linux 链照常打开。
 - 除自身日志 `~/.dsh-tui/dsh-open-terminal.log` 外，本插件不写任何文件、不向工作区落盘、不追加 session 事件。
 
 ## 发布
@@ -104,6 +107,8 @@ dsh plugin --profile dsh-tui add file:<本仓库绝对路径>
 - **生态收录**：本 README 顶部带有 <https://dshtui.com/plugins/> 要求的 [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI) 链接
 
 ## 开发与验证
+
+本节命令都只适用于**本仓库的本地检出（workspace checkout）**。npm 发布包里只有 `lib/`、`dsh-plugin.json`、`cordis.patch.yml` 与文档 —— `src/`、`test/`、`scripts/` 以及工作区的 `tools/` **都不在其中**（`package.json` 的 `files` 有意排除）。
 
 ```sh
 pnpm install
@@ -116,9 +121,10 @@ pnpm prepublishOnly     # 四合一
 
 入口模块（`src/index.ts` → `lib/index.js`）刻意只再导出 `{ Config, apply, name }`；`test/entry.test.ts` 锁死该形状 —— 导出更多符号会让 dsh-TUI 的接缝静默拒绝整个插件的注册。
 
-真实组合下的集成探测：
+真实组合下的集成探测 —— **仅限本地检出**：该脚本在工作区仓库的 `tools/` 里，不在 npm 发布包中，所以从 npm 安装的用户跑不通这一行：
 
 ```sh
+# 在工作区根目录（含 tools/ 与 plugins/ 的那一层）执行，且需先 pnpm build
 node tools/probe-plugin.mjs plugins/dsh-open-terminal   # 退出码 0 = 注册被宿主接受
 ```
 

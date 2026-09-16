@@ -18,10 +18,10 @@
  *            window.
  *  - darwin  `open -a Terminal <dir>`.
  *  - linux   a preference-ordered chain of emulators that accept an explicit
- *            working directory (gnome-terminal, konsole, xfce4-terminal,
- *            mate-terminal, kitty, alacritty, wezterm, foot) and finally the
- *            generic `x-terminal-emulator` / `xterm`, which get the directory
- *            through the child's `cwd`.
+ *            working directory (gnome-terminal, kgx, konsole, xfce4-terminal,
+ *            mate-terminal, kitty, alacritty, wezterm, foot, tilix, terminator)
+ *            and finally the generic `x-terminal-emulator` / `xterm`, which get
+ *            the directory through the child's `cwd`.
  *  - WSL     the Linux chain first (WSLg), then a Windows-side
  *            `cmd.exe /c start "" "wt.exe" -d "\\wsl$\<distro>\…"` last resort.
  *
@@ -34,9 +34,14 @@
  *     FALSE and `statSync()` throws EACCES, while `lstatSync()` succeeds. A
  *     probe built on `existsSync` would silently skip exactly the terminals
  *     users expect, which is why {@link executableProbe} uses `lstatSync`.
- *  3. `%` must never reach a `cmd` command line (it expands `%VAR%`), and the
- *     shim cannot carry quotes safely — {@link parseLaunchTemplate} rejects
- *     both in user configuration instead of escaping them.
+ *  3. `%` must never reach a `cmd` command line (it expands `%VAR%`) and the
+ *     shim cannot carry quotes safely, so {@link parseLaunchTemplate} rejects
+ *     `%` in user configuration instead of escaping it. Quotes are NOT rejected
+ *     — they are the template's grouping syntax (a quote of the other kind
+ *     nested inside a quoted group is the only way one reaches a token).
+ *     Because the check runs on the template, before `{dir}` is substituted, the
+ *     final command line is re-checked in {@link buildTerminalChain}: a folder
+ *     named `50%off` would otherwise smuggle `%` past the template check.
  *
  * @module dsh-open-terminal/terminal
  */
@@ -126,12 +131,25 @@ export function terminalHint(platform: NodeJS.Platform, lang: Lang = resolveLang
 export const DIR_PLACEHOLDER = '{dir}';
 
 /**
- * Characters that must never reach a `cmd` command line built by this plugin.
- * `%` is expanded by cmd even inside quotes; a quote would break the fixed
- * `start "" <exe> <args>` shape. Both are rejected in configuration rather
- * than half-escaped.
+ * Characters a `command` template token must never carry. `%` is expanded by
+ * cmd even inside quotes, and CR/LF/NUL would truncate the line; a quote is
+ * listed because one can only land in a token by nesting the *other* quote kind
+ * inside a quoted group (`'a"b'`), which is configuration noise, never intent.
+ * Rejected in configuration rather than half-escaped.
  */
 const FORBIDDEN_TEMPLATE_CHARS: readonly string[] = ['"', "'", '%', '\n', '\r', '\0'];
+
+/**
+ * Characters that cannot be made safe on a `cmd` command line built from a
+ * *value* (the target directory, a resolved program path).
+ *
+ * The template parser never sees those values — they are substituted afterwards
+ * — so they need their own pass. Only `%` is realistic inside a Windows path
+ * (`50%off`); `"`, CR/LF and NUL cannot occur in one at all. The apostrophe is
+ * deliberately absent: `'` means nothing to `cmd` and "Bob's stuff" is a
+ * perfectly legal folder name that must keep working.
+ */
+const CMD_UNSAFE_VALUE_CHARS: readonly string[] = ['%', '"', '\n', '\r', '\0'];
 
 /** Result of parsing a `command` template: tokens, or why it was rejected. */
 export interface TemplateParseResult {
@@ -144,9 +162,14 @@ export interface TemplateParseResult {
  *
  * Whitespace separates tokens; single and double quotes group them (the quotes
  * themselves are not part of the token, so `-p "Git Bash"` yields `-p` and
- * `Git Bash`). `{dir}` may stand alone or be glued to other characters
+ * `Git Bash`) — quotes are grouping syntax, not a rejected character. `{dir}`
+ * may stand alone or be glued to other characters
  * (`--working-directory={dir}`). Unknown placeholders and the characters listed
  * in {@link FORBIDDEN_TEMPLATE_CHARS} are rejected with a clear error.
+ *
+ * This runs on the template only: the value `{dir}` will hold is unknown here,
+ * which is why a command line destined for `cmd` is re-checked after
+ * substitution ({@link cmdUnsafeValueError}).
  */
 export function parseLaunchTemplate(template: string): TemplateParseResult {
     const tokens: string[] = [];
@@ -213,6 +236,26 @@ export function substituteTemplateTokens(tokens: readonly string[], dir: string)
 /** Does this token list place the directory itself on the command line? */
 export function carriesDirPlaceholder(tokens: readonly string[]): boolean {
     return tokens.some((token) => token.includes(DIR_PLACEHOLDER));
+}
+
+/**
+ * Would any `cmd`-bound token be corrupted by a character it carries?
+ *
+ * Split out from {@link parseLaunchTemplate} because the two run at different
+ * times against different character sets: the parser checks the *template*
+ * (where a nested quote is also suspicious), while this checks the *values*
+ * substituted into it — see {@link CMD_UNSAFE_VALUE_CHARS}. Returns the error
+ * message, or undefined when the tokens are safe.
+ */
+export function cmdUnsafeValueError(tokens: readonly string[], dir: string): string | undefined {
+    for (const token of tokens) {
+        for (const bad of CMD_UNSAFE_VALUE_CHARS) {
+            if (token.includes(bad)) {
+                return `目标路径含 ${JSON.stringify(bad)} 字符，无法安全传给 cmd（会被展开或截断）：${dir}`;
+            }
+        }
+    }
+    return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -343,12 +386,26 @@ const DARWIN_CANDIDATES: readonly TerminalCandidate[] = [
 ];
 
 /**
- * Linux chain, most specific working-directory flag first. The last two carry
- * no flag and rely on the child's `cwd`, which is the only thing the generic
- * `x-terminal-emulator` and `xterm` understand.
+ * Linux chain, most specific working-directory flag first.
+ *
+ * Order rationale: the emulators a distribution ships as its own default come
+ * first (GNOME Terminal, then GNOME Console/kgx — Fedora and modern GNOME
+ * default to it —, Konsole, Xfce, MATE), then the widely used standalone
+ * emulators, then the third-party GTK tiling terminals, and only then the
+ * generic `x-terminal-emulator` (Debian's alternatives symlink) and `xterm`.
+ * `tilix`/`terminator` are appended at the tail of the explicit-flag group so
+ * that adding them reorders nothing that already worked; `kgx` sits by
+ * distro-default status, right after GNOME Terminal.
+ *
+ * The last two carry no flag and rely on the child's `cwd`, which is the only
+ * thing the generic `x-terminal-emulator` and `xterm` understand. Every flag is
+ * the program's own documented working-directory option; the `kgx`, `tilix` and
+ * `terminator` entries were verified against upstream source / manual pages.
  */
 const LINUX_CANDIDATES: readonly TerminalCandidate[] = [
     { program: 'gnome-terminal', argv: (dir) => [`--working-directory=${dir}`], kickoff: 'direct' },
+    // GNOME Console; `--working-directory=DIRNAME` comes from its GOptionEntry.
+    { program: 'kgx', argv: (dir) => [`--working-directory=${dir}`], kickoff: 'direct' },
     { program: 'konsole', argv: (dir) => ['--workdir', dir], kickoff: 'direct' },
     { program: 'xfce4-terminal', argv: (dir) => [`--working-directory=${dir}`], kickoff: 'direct' },
     { program: 'mate-terminal', argv: (dir) => [`--working-directory=${dir}`], kickoff: 'direct' },
@@ -356,6 +413,8 @@ const LINUX_CANDIDATES: readonly TerminalCandidate[] = [
     { program: 'alacritty', argv: (dir) => ['--working-directory', dir], kickoff: 'direct' },
     { program: 'wezterm', argv: (dir) => ['start', '--cwd', dir], kickoff: 'direct' },
     { program: 'foot', argv: (dir) => [`--working-directory=${dir}`], kickoff: 'direct' },
+    { program: 'tilix', argv: (dir) => [`--working-directory=${dir}`], kickoff: 'direct' },
+    { program: 'terminator', argv: (dir) => [`--working-directory=${dir}`], kickoff: 'direct' },
     { program: 'x-terminal-emulator', argv: () => [], kickoff: 'direct' },
     { program: 'xterm', argv: () => [], kickoff: 'direct' },
 ];
@@ -474,6 +533,14 @@ export function buildTerminalChain(request: TerminalLaunchRequest): TerminalLaun
             return { specs: [], error: `配置的终端程序不可用：${program}（已按 PATH 查找）` };
         }
         const argv = substituteTemplateTokens(rest, dir);
+        if (host.platform === 'win32') {
+            // The parser above only saw the template; the folder name (and the
+            // resolved program path) reach the `cmd /c start` line afterwards,
+            // so the final command line is what has to be safe — a folder named
+            // `50%off` would otherwise expand as `%off%`.
+            const unsafe = cmdUnsafeValueError([programPath, ...argv], dir);
+            if (unsafe !== undefined) return { specs: [], error: unsafe };
+        }
         const spec = host.platform === 'win32'
             ? consoleShimSpec(host, program, programPath, argv, dir)
             : directSpec(program, programPath, argv, dir);
@@ -493,7 +560,14 @@ export function buildTerminalChain(request: TerminalLaunchRequest): TerminalLaun
         const distro = host.env.WSL_DISTRO_NAME;
         const comspecName = host.env.ComSpec !== undefined && host.env.ComSpec !== '' ? host.env.ComSpec : 'cmd.exe';
         const comspec = distro !== undefined && distro !== '' ? resolve(comspecName) : null;
-        if (comspec !== null) specs.push(wslFallbackSpec(comspec, dir, distro as string));
+        // The UNC form of the folder is the one value on this `cmd /c start`
+        // line that comes from the user, so it gets the same post-substitution
+        // check as a template. Dropping just this last resort (the Linux chain
+        // above is untouched) beats handing `cmd` a `%` it will expand.
+        if (comspec !== null
+            && cmdUnsafeValueError([wslUncPath(dir, distro as string)], dir) === undefined) {
+            specs.push(wslFallbackSpec(comspec, dir, distro as string));
+        }
     }
 
     return { specs };
